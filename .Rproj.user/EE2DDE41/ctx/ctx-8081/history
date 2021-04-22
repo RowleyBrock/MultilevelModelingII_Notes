@@ -1,0 +1,29 @@
+library(tidyverse)
+popular <- read_csv(here::here("data", "popularity.csv"))
+popular
+library(lme4)
+m0 <- lmer(popular ~ 1 + (1|class), popular)
+m1 <- lmer(popular ~ sex + (1|class), popular)
+m2 <- lmer(popular ~ sex + (sex|class), popular)
+compare_performance(m0, m1, m2) %>%
+print_md()
+?print_md
+compare_performance(m0, m1, m2) %>%
+??print_md()
+??print_md
+library(performance)
+print_md()
+compare_performance(m0, m1, m2) %>%
+??print_md()
+m0 <- lmer(popular ~ 1 + (1|class), popular)
+m1 <- lmer(popular ~ sex + (1|class), popular)
+m2 <- lmer(popular ~ sex + (sex|class), popular)
+compare_performance(m0, m1, m2) %>%
+print_md()
+test_likelihoodratio(m0, m1) %>%
+print_md()
+test_likelihoodratio(m1, m2) %>%
+print_md()
+install.packages("broom.mixed")
+library(broom.mixed)
+install.packages('TMB', type = 'source')

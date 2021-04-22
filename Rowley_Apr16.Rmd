@@ -1,0 +1,498 @@
+---
+title: "Rowley_Apr16"
+author: "Brock Rowley"
+date: "4/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(performance)
+library(broom.mixed)
+library(TMB)
+library(parameters)
+library(equatiomatic)
+library(merTools)
+library(ggeffects)
+
+popular <- read_csv(here::here("data", "popularity.csv"))
+popular
+```
+```{r model_fit}
+m0 <- lmer(popular ~ 1 + (1|class), popular)
+m1 <- lmer(popular ~ sex + (1|class), popular)
+m2 <- lmer(popular ~ sex + (sex|class), popular)
+```
+
+```{r compare_performance}
+compare_performance(m0, m1, m2) %>%
+  print_md()
+```
+
+```{r log_likelihood}
+test_likelihoodratio(m0, m1) %>%
+  print_md()
+
+test_likelihoodratio(m1, m2) %>%
+  print_md()
+```
+
+```{r broom_mixed}
+tidy(m0)
+tidy(m0, effects = "fixed")
+```
+
+```{r tidy_models_fix_effects}
+models <- bind_rows(
+  tidy(m0, effects = "fixed", conf.int = TRUE),
+  tidy(m1, effects = "fixed", conf.int = TRUE),
+  tidy(m2, effects = "fixed", conf.int = TRUE),
+  .id = "model"
+  ) %>%
+  mutate(model = as.numeric(model) - 1)
+models
+```
+
+```{r plot}
+pd <- position_dodge(0.5)
+ggplot(models, aes(estimate, term, color = factor(model))) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high),
+                 position = pd,
+                 height = 0.2) +
+  geom_point(position = pd)
+```
+
+```{r parameters}
+parameters(m0) %>%
+  as_tibble()
+
+models2 <- bind_rows(
+  as_tibble(parameters(m0)),
+  as_tibble(parameters(m1)),
+  as_tibble(parameters(m2)),
+  .id = "model"
+  ) %>%
+  mutate(model = as.numeric(model) - 1)
+```
+
+```{r plot_parameters}
+pd <- position_dodge(0.5)
+ggplot(models2, aes(Coefficient, Parameter,
+                    color = factor(model))) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high),
+                 position = pd,
+                 height = 0.2) +
+  geom_point(position = pd)
+```
+
+# Bootstrap confidence intervals
+```{r variance_components}
+tidy(
+  m0,
+  effects = "ran_pars",
+  conf.int = TRUE, 
+  conf.method = "boot"
+)
+
+tidy(
+  m2,
+  effects = "ran_pars",
+  conf.int = TRUE, 
+  conf.method = "boot"
+)
+```
+
+```{r dot_plot}
+pull_results <- function(model) {
+  tidy(
+    model,
+    conf.int = TRUE, 
+    conf.method = "boot"
+  )
+}
+full_models <- bind_rows(
+  pull_results(m0),
+  pull_results(m1),
+  pull_results(m2),
+  .id = "model"
+)
+
+ggplot(full_models, aes(estimate, term, color = factor(model))) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), 
+                 position = pd,
+                 height = 0.2) +
+  geom_point(position = pd) +
+  facet_wrap(~effect, scales = "free_y") +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+tidy(m0, effects = "ran_vals")
+# ran_vals provides the estimate from αj∼N(0,σ).
+tidy(m0, effects = "ran_vals")$estimate[1:5] + fixef(m0)[1]
+
+tidy(m0, effects = "ran_coefs")
+# ran_coefs provides the class-level predictions, i.e., in this case, the intercept + the estimated ran_vals.
+tidy(m0, effects = "ran_coefs")$estimate[1:5]
+```
+
+```{r plot_ran_vals}
+m0_ranvals <- tidy(m0, effects = "ran_vals", conf.int = TRUE)
+ggplot(m0_ranvals, aes(level, estimate)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2) +
+  geom_point() +
+  geom_hline(yintercept = 0, size = 2, color = "magenta")
+
+# Reorder the level according to the estimate
+m0_ranvals %>% 
+  mutate(level = reorder(factor(level), estimate)) %>%
+  ggplot(aes(level, estimate)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.5) +
+  geom_point() +
+  geom_hline(yintercept = 0, size = 2, color = "magenta")
+```
+
+```{r review}
+popular
+m<- lm(popular ~ 1 + sex, data = popular)
+# estimated model is:
+equatiomatic::extract_eq(m, use_coef = TRUE)
+```
+$$
+\operatorname{\widehat{popular}} = 4.28 + 1.57(\operatorname{sex}_{\operatorname{girl}})
+$$
+```{r making_prediction}
+pupil1 <- popular[1, ]
+pupil1
+
+coef(m)[1] + # intercept
+  coef(m)[2] * (pupil1$sex == "girl")
+
+predict(m)[1]
+predict(m2)[1]
+
+# Extract the ran_vals for the coresponding class
+
+m2_ranvals <- tidy(m2, effects = "ran_vals")
+class1_ranvals <- m2_ranvals %>%
+  filter(group == "class" & level == 1)
+class1_ranvals
+
+fixef(m2)
+fixef(m2)[1] + fixef(m2)[2]*(popular[1, ]$sex == "girl") +
+  class1_ranvals$estimate[1] + class1_ranvals$estimate[2]
+# Confirm
+predict(m2)[1]
+```
+
+```{r calculate_predict_byhand}
+class10_ranvals <- m2_ranvals %>%
+  filter(group == "class" & level == 10)
+fixef(m2)[1] + class10_ranvals$estimate[1]
+
+# Confirm with predict()
+test <- popular %>%
+  mutate(pred = predict(m2)) %>%
+  filter(class == 10 & sex == "boy")
+test
+```
+
+```{r more_predict}
+head(sim_longitudinal)
+m <- lmer(score ~ wave + treatment + (wave|sid),
+          data = sim_longitudinal)
+
+#Limit data to the first three students
+first_three <- sim_longitudinal %>%
+  ungroup() %>%
+  filter(sid %in% 1:3)
+
+# Creat new column in the data with the model predictions for these three students. Specify newdata = first_three to only make the predictions for those cases.
+first_three %>%
+  mutate(model_pred = predict(m, newdata = first_three))
+```
+
+```{r plot_wave_score}
+first_three %>%
+  mutate(model_pred = predict(m, newdata = first_three)) %>%
+  ggplot(aes(wave, score, color = treatment)) +
+  geom_point() +
+  geom_line() +
+  geom_line(aes(y = model_pred)) + # added the line for prediction
+  facet_wrap(~sid)
+```
+
+```{r student_two}
+stu2_trt <- data.frame(
+  sid = 2,
+  wave = 0:9,
+  treatment = factor("1", levels = c(0, 1))
+)
+predict(m, newdata = stu2_trt)
+```
+
+```{r compare}
+sim_longitudinal %>%
+  filter(sid == 2) %>%
+  mutate(model_pred = predict(m, newdata = .),
+         trt_pred = predict(m, newdata = stu2_trt)) %>%
+  ggplot(aes(wave, score)) +
+  geom_point() +
+  geom_line() +
+  geom_line(aes(y = model_pred)) +
+  geom_line(aes(y = trt_pred),
+            color = "firebrick") +
+  annotate(
+    "text",
+    x = 6,
+    y = 81,
+    hjust = 0,
+    color = "firebrick",
+    label = "Predicted slope if student\nwas in treatment group"
+  )
+# Negative?
+# YES...
+arm::display(m)
+summary(m)
+```
+
+```{r linear_projections}
+newdata_stu2 <- data.frame(
+  sid = 2,
+  wave = rep(-500:500, 2),
+  treatment = factor(rep(c(0, 1), each = length(-500:500)))
+)
+
+newdata_stu2 %>%
+  mutate(pred = predict(m, newdata = newdata_stu2)) %>%
+  ggplot(aes(wave, pred)) +
+  geom_line(aes(color = treatment))
+```
+
+```{r predict_data_uncertainty}
+pred_frame <- data.frame(
+  sid = rep(1:3, each = 13),
+  wave = rep(0:12),
+  treatment = factor(rep(c(1, 0, 1), each = 13))
+)
+head(pred_frame)
+
+# Create a prediction inerval with predictInterval(), using simulatin to obtain the prediction interval
+m_pred_interval <- predictInterval(m, newdata = pred_frame, level = 0.95)
+m_pred_interval
+
+# Binding data together
+bind_cols(pred_frame, m_pred_interval)
+
+# Plot the data
+bind_cols(pred_frame, m_pred_interval) %>%
+  ggplot(aes(wave, fit)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr),
+              alpha = 0.4) +
+  geom_line(color = "magenta") +
+  facet_wrap(~sid)
+```
+
+```{r boostrapping}
+pred_fun <- function(fit) {
+  predict(fit, newdata = pred_frame)
+}
+
+# Now create BS Estimates
+b <- bootMer(m, nsim = 1000, FUN = pred_fun, use.u = TRUE, seed = 42)
+
+# Predictions are stored in a matrix t where each row of the matrix is the prediction for the given bootstrap estimate.
+dim(b$t)
+
+# Move to a data frame
+bd <- as.data.frame(t(b$t)) %>%
+  mutate(sid = rep(1:3, each = 13),
+         wave = rep(0:12, 3)) %>%
+  pivot_longer(
+    starts_with("V"),
+    names_to = "bootstrap_sample",
+    names_prefix = "V",
+    names_transform = list(bootstrap_sample = as.numeric),
+    values_to = "score"
+  ) %>% 
+  arrange(sid, bootstrap_sample, wave)
+bd
+
+# Plot it
+ggplot(bd, aes(wave, score)) +
+  geom_line(aes(group = bootstrap_sample),
+            size = 0.1,
+            alpha = 0.5,
+            color = "cornflowerblue") +
+  facet_wrap(~sid)
+
+# Prefer ribbons?
+bd_ribbons <- bd %>%
+  group_by(sid, wave) %>%
+  summarize(quantile = quantile(score, c(0.025, 0.975)),
+            group = c("lower", "upper")) %>%
+  pivot_wider(names_from = "group", values_from = "quantile")
+bd_ribbons
+
+# Join with real data
+bd_ribbons <- left_join(first_three, bd_ribbons) %>%
+  mutate(pred = predict(m, newdata = first_three))
+
+# Plot it again
+ggplot(bd_ribbons, aes(wave, score)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line(aes(y = pred), size = 1, color = "magenta") +
+  geom_point() +
+  facet_wrap(~sid)
+```
+
+```{r interactions}
+# Specified just like with lm() each of the below are equivalent
+# wave + treatment + wave:treatment
+# wave * treatment
+
+# Implicit Nesting
+m1a <- lmer(score ~ wave*treatment +
+              (wave|sid) + (1|school),
+            data = sim_longitudinal)
+summary(m1a)
+
+# Explicit Nesting
+m1b <- lmer(score ~ wave*treatment +
+              (wave|sid:school) + (1|school) , # safer for same id
+            data = sim_longitudinal)
+summary(m1b)
+```
+
+```{r by_hand_predictions}
+sim_longitudinal[4, ]
+
+fixed <- fixef(m1a)
+ranefs <- ranef(m1a)
+fixed
+
+# Pull just the ranefs for sid 1 and school 1
+sid_ranefs <- ranefs$sid[1, ] 
+sid_ranefs
+
+sch_ranefs <- ranefs$school[1, ]
+sch_ranefs
+
+# Putting it together
+(fixed[1] + sid_ranefs[1] + sch_ranefs) + # intercept
+((fixed[2] + sid_ranefs[2]) * 3) + # fourth timepoint
+(fixed[3] * 1) + # treatment effect
+(fixed[4] * 3)  # treatment by wave effect
+
+# Confirm
+predict(m1a, newdata = sim_longitudinal[4, ])
+```
+
+```{r predictions_five_students}
+samp <- sim_longitudinal %>%
+  filter(school %in% 1:4) %>%
+  group_by(school, sid) %>%
+  nest()
+samp
+
+# Select 10 rows for each school
+set.seed(42)
+samp %>%
+  group_by(school) %>%
+  sample_n(5)
+
+# Unnest
+set.seed(42)
+samp <- samp %>%
+  group_by(school) %>%
+  sample_n(5) %>%
+  unnest(data) %>%
+  ungroup()
+samp
+
+# Make prediction
+samp %>%
+  mutate(pred = predict(m1a, newdata = samp))
+
+# Plot
+samp %>%
+  mutate(pred = predict(m1a, newdata = samp)) %>%
+  ggplot(aes(wave, pred, group = sid)) +
+  geom_line() +
+  facet_wrap(~school)
+```
+
+```{r Marginal_Effect}
+m2 <- lmer(score ~ wave*treatment + group + prop_low +
+              (wave|sid) + (1|school) ,
+            data = sim_longitudinal)
+
+arm::display(m2, detail = TRUE)
+```
+
+```{r marg_effect}
+marginal_frame1 <- data.frame(
+  wave = rep(0:9, 2),
+  treatment = as.factor(rep(c(0, 1), each = 10)),
+  group = factor("high", levels = c("low", "medium", "high")),
+  prop_low = mean(sim_longitudinal$prop_low, na.rm = TRUE),
+  sid = -999,
+  school = -999
+)
+marginal_frame1
+```
+
+```{r make_predictions}
+# Note that we have to specify to allow new levels
+marginal_frame1 <- marginal_frame1 %>% 
+  mutate(pred = predict(m2, 
+                        newdata = marginal_frame1, 
+                        allow.new.levels = TRUE))
+marginal_frame1
+```
+
+```{r plot_marginal}
+ggplot(marginal_frame1, aes(wave, pred, color = treatment)) +
+  geom_line()
+```
+
+```{r all_groups}
+marginal_frame2 <- data.frame(
+  wave = rep(0:9, 2*3),
+  treatment = as.factor(rep(c(0, 1), each = 10*3)),
+  group = factor(
+    rep(
+      rep(c("low", "medium", "high"), each = 10),
+      2
+    )
+  ),
+  prop_low = mean(sim_longitudinal$prop_low, na.rm = TRUE),
+  sid = -999,
+  school = -999
+)
+
+# Predict & Plot
+marginal_frame2 %>%
+  mutate(
+    pred = predict(m2, newdata = marginal_frame2, allow.new.levels = TRUE)
+  ) %>% 
+  ggplot(aes(wave, pred, color = treatment)) +
+  geom_line() +
+  facet_wrap(~group)
+```
+
+```{r automated_method}
+ggpredict(m2, "wave")
+
+ggpredict(m2, c("wave", "treatment")) %>%
+  plot()
+
+# Individual obsrevations
+ggpredict(m2, "wave", condition = c(sid = 1, school = 1))
+```
+

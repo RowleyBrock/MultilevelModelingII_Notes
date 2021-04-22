@@ -1,0 +1,100 @@
+---
+title: "Fri_Apr2"
+author: "Brock Rowley"
+date: "4/2/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(equatiomatic)
+library(easystats)
+```
+
+```{r}
+head(hsb)
+
+sch_means <- hsb %>% 
+  group_by(sch.id) %>% 
+  summarize(sch_mean = mean(math, na.rm = TRUE),
+            sch_mean_se = sd(math, na.rm = TRUE)/sqrt(n()))
+# use (n() to say how many rows in data
+sch_means
+```
+
+```{r plot_means}
+ggplot(sch_means, aes(sch_mean, sch.id)) +
+  geom_point()
+```
+
+```{r order_schools}
+sch_means %>% 
+  mutate(sch.id = factor(sch.id),
+         sch.id = reorder(sch.id, sch_mean)) %>%
+  ggplot(aes(sch_mean, sch.id)) +
+  geom_point()
+```
+
+```{r SE_mean}
+sch_means %>% 
+  mutate(sch.id = factor(sch.id),
+         sch.id = reorder(sch.id, sch_mean)) %>% 
+  ggplot(aes(sch_mean, sch.id)) +
+  geom_errorbarh(
+    aes(xmin = sch_mean - 1.96*sch_mean_se,
+        xmax = sch_mean + 1.96*sch_mean_se),
+  ) +
+  geom_point(color = "#0aadff")
+```
+
+```{r sample_mean}
+sch_means %>% 
+  mutate(sch.id = factor(sch.id),
+         sch.id = reorder(sch.id, sch_mean)) %>% 
+  ggplot(aes(sch_mean, sch.id)) +
+  geom_errorbarh(
+    aes(xmin = sch_mean - 1.96*sch_mean_se,
+        xmax = sch_mean + 1.96*sch_mean_se),
+    height = 0.3
+  ) + 
+  geom_point(color = "#0aadff") +
+  geom_vline(xintercept = mean(hsb$math, na.rm = TRUE),
+             color = "#0affa5",
+             size = 2)
+```
+# Fit an intercep and allow it to vary by school. 
+```{r model_estimate}
+m0 <- lmer(math ~ 1 + (1|sch.id), hsb)
+summary(m0)
+#math is the outcome predicted by 
+```
+
+```{r estimated_mean}
+estimated_means <- coef(m0)$sch.id
+head(estimated_means)
+
+estimated_means <- estimated_means %>% 
+  mutate(sch.id = as.integer(rownames(.))) %>% 
+  rename(intercept = `(Intercept)`)
+left_join(sch_means, estimated_means)
+```
+
+```{r plot}
+left_join(sch_means, estimated_means) %>% 
+  mutate(sch.id = factor(sch.id),
+         sch.id = reorder(sch.id, sch_mean)) %>% 
+  ggplot(aes(sch_mean, sch.id)) +
+  geom_point(color = "#0aadff") +
+  geom_point(aes(x = intercept),
+             color = "#ff0ad6") +
+    geom_vline(xintercept = mean(hsb$math, na.rm = TRUE),
+             color = "#0affa5",
+             size = 2)
+```
+
+```{r ICC}
+icc(m0)
+```
+

@@ -1,0 +1,160 @@
+library(tidyverse)
+library(lme4)
+popular <- read_csv(here::here("data", "popularity.csv"))
+m <- lmer(popular ~ extrav + (extrav|class), popular,
+control = lmerControl(optimizer = "bobyqa"))
+arm::display(m)
+slr <- lm(popular ~ extrav, popular)
+slr
+ggplot(popular, aes(extrav, popular)) +
+geom_point() +
+geom_smooth(se = FALSE, method = "lm")
+sample_preds <- popular %>%
+group_by(class) %>%
+slice(1) %>%
+ungroup %>%
+slice(1:4)
+sample_preds
+# Fixed effects
+f <- fixef(m)
+f
+# Classroom deviations
+r <- ranef(m)
+r
+# Predictions depend on classroom
+# Works just like simple linear regression
+sample_preds[1, ]
+f[1] + f[2]*5
+# Add in the random effects for the corresponding classroom
+head(r$class)
+sample_preds
+head(r$class, n = 4)
+fixef(m)
+predict(m, newdata = sample_preds)
+# We can use the expand.grid() function to create different conditions. Compare slopes across the first five classrooms
+conditions <- expand.grid(extrav = 1:10, class = 1:5)
+head(conditions)
+tail(conditions)
+# Make predictions
+conditions %>%
+mutate(model_pred = predict(m, newdata = conditions))
+# Plot
+conditions %>%
+mutate(model_pred = predict(m, newdata = conditions)) %>%
+ggplot(aes(extrav, model_pred)) +
+geom_line(aes(group = class))
+# One more quick example
+# Model an interaction
+m2 <- lmer(popular ~ extrav*sex + (extrav|class), popular,
+control = lmerControl(optimizer = "bobyqa"))
+arm::display(m2)
+# Marginal effect
+# Interaction between extraversion and sex
+conditions2 <- expand.grid(extrav = 1:10,
+sex = c("girl", "boy"),
+class = 0) %>%
+mutate(pred = predict(m2,
+newdata = .,
+allow.new.levels = TRUE))
+conditions2
+#Plot
+ggplot(conditions2, aes(extrav, pred)) +
+geom_line(aes(color = sex))
+m <- lm(mpg ~ disp + hp + drat, data = mtcars)
+# simulate
+n <- 1000
+intercept <- 100
+b1 <- 5
+b2 <- -3
+b3 <- 0.5
+sigma <- 4.5
+set.seed(123)
+x1 <- rnorm(n, sd = 1)
+x2 <- rnorm(n, sd = 2)
+x3 <- rnorm(n, sd = 4)
+# Create y-hat
+yhat <- intercept + b1*x1 + b2*x2 + b3*x3
+# Generate data & test
+sim <- rnorm(n, yhat, sigma)
+summary(lm(sim ~ x1 + x2 + x3))
+library(equatiomatic)
+hsb_m0 <- lmer(math ~ ses + (1|sch.id), data = hsb)
+# Set some parameters
+j <- 30 # 30 schools
+nj <- 50 # 50 students per school
+# Simulate the school distribution
+a_j <- rnorm(j, 0, 2.18)
+# Using a for() loop here in an effort to be transparent
+school_scores <- vector("list", j)
+ses <- vector("list", j)
+for(i in 1:j) {
+ses[[i]] <- rnorm(nj)
+school_scores[[i]] <- rnorm(nj,
+12.66 + 2.39*ses[[i]] + a_j[i],
+6.09)
+}
+sim_df <- data.frame(
+scid = rep(1:j, each = nj),
+ses = unlist(ses),
+score = unlist(school_scores)
+)
+# Test it out
+sim_m0 <- lmer(score ~ ses + (1|scid), data = sim_df)
+summary(sim_m0)
+# Add a school-level predictor
+hsb_m1 <- lmer(math ~ ses + sector + (1|sch.id), data = hsb)
+extract_eq(hsb_m1)
+library(TMB)
+extract_eq(hsb_m1)
+# Add a random slope
+hsb_m2 <- lmer(math ~ ses + sector + (ses|sch.id), data = hsb)
+extract_eq(hsb_m2)
+# Include sector as a predictor of the relation between ses and math
+hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
+control = lmerControl(optimizer = "nmkbw"))
+extract_eq(hsb_m3)
+# Include sector as a predictor of the relation between ses and math
+hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
+control = lmerControl(optimizer = "nmkbw"))
+hsb_m3
+# Include sector as a predictor of the relation between ses and math
+hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
+control = lmerControl(optimizer = "nmkbw"))
+# Include sector as a predictor of the relation between ses and math
+hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
+control = lmerControl(optimizer = "nmkbw"))
+?lmerControl
+install.packages("dfoptim")
+library(dfoptim)
+# Include sector as a predictor of the relation between ses and math
+hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
+control = lmerControl(optimizer = "nmkbw"))
+extract_eq(hsb_m3)
+hsb_m4 <- lmer(
+math ~ ses * sector + minority + female + meanses + size +
+(ses + minority + female|sch.id),
+data = hsb
+)
+extract_eq(hsb_m4)
+head(sim_longitudinal)
+# Model doesn't really fit again
+sl_m <- lmer(
+score ~ wave*treatment + group + prop_low +
+(wave|sid) + (wave + treatment| school) + (1|district),
+data = sim_longitudinal
+)
+extract_eq(sl_m)
+willett <- read_csv(here::here("data", "willett-1988.csv"))
+willett <- read_csv(here::here("data", "willett-1988.csv"))
+bad <- lm(opp ~ time, data = willett)
+summary(bad)
+# Fit a parallel slopes model with Willett data
+w0 <- lmer(opp ~ time + (1|id), willett)
+library(sundry)
+# Use sundry to pull residual variance-covariance
+w0_rvcv <- pull_residual_vcov(w0)
+library(sundry)
+?sundry
+?pull_residual_vcov
+??pull_residual_vcov
+install.packages("remotes")

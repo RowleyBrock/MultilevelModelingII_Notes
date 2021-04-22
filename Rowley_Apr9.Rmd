@@ -1,0 +1,154 @@
+---
+title: "Rowley_Apr9"
+author: "Brock Rowley"
+date: "4/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(performance)
+theme_set(theme_minimal(25))
+knitr::opts_chunk$set(fig.width = 9, fig.height = 6)
+curran <- read_csv(here::here("data", "curran.csv"))
+curran
+```
+
+```{r select_ID}
+read <- curran %>% 
+  select(id, starts_with("read"))
+read %>% 
+  pivot_longer(cols = read1:read4,
+               names_to = "timepoint",
+               values_to = "score")
+# Specify the columns that should NOT be pivoted
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score")
+```
+
+```{r modify_column}
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score") %>% 
+  mutate(timepoint = parse_number(timepoint) - 1)
+```
+
+```{r transform_pivot}
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score",
+               names_transform = list(timepoint = parse_number))
+#names_transform
+```
+
+```{r altTransorm_pivot}
+sub1 <- function(x) parse_number(x) - 1
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score",
+               names_transform = list(timepoint = sub1))
+```
+
+```{r non_subtraction}
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score",
+               names_prefix = "read",
+               names_ptype = list(timepoint = "numeric"))
+```
+
+```{r longer_data}
+l <- read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score",
+               names_transform = list(timepoint = sub1))
+```
+
+```{r wider_data}
+l %>% 
+  pivot_wider(names_from = timepoint,
+              values_from = score)
+```
+
+```{r challenge}
+d <- curran %>%
+  pivot_longer(anti1:read4,
+               names_to = "variable",
+               values_to = "score") %>% 
+               mutate (timepoint = parse_number(variable) -1,
+                       variable = stringr:: str_sub(variable, 0, 4 )) %>% 
+  pivot_wider(names_from = variable,
+              values_from = score)
+```
+
+```{r example_lettersounds}
+ls <- read_csv(here::here("data", "ls19.csv"))
+ls
+```
+
+```{r example_selfregulation}
+selfreg <- read_csv(here::here("data", "selfreg19.csv"))
+selfreg
+```
+
+```{r model_random_intercepts}
+random_intercepts <- lmer(read ~ 1 + timepoint + (1|id),
+                     data = d)
+
+summary(random_intercepts)
+#arm::display(random_intercepts)
+
+#lmer = Linear Mix Effects Regression
+```
+
+```{r model_random_slopes}
+random_slopes <- lmer(read ~ 1 + timepoint + (1 + timepoint|id),
+                 data = d)
+summary(random_slopes)
+
+# simplify the code like:
+# m_slopes <- lmer(read ~ timepoint + (timepoint|id), data = d
+
+confint(random_slopes)
+```
+## Computing profile confidence intervals
+    2.5 %    97.5 %
+.sig01      0.67961051 0.8365439
+.sig02      0.06898955 0.5434982
+.sig03      0.22282787 0.3213734
+.sigma      0.55548063 0.6238545
+(Intercept) 2.60721096 2.7850364
+timepoint   1.07653165 1.1622218
+
+```{r refit_model}
+m_slopes2 <- lmer(read ~ timepoint + (timepoint|id),
+                  data = d)
+summary(m_slopes2)
+```
+
+```{r}
+anova(random_intercepts, random_slopes)
+# lower values indicates better fit to data
+# any value greater than 10 indicates a significant difference
+
+compare_performance(random_intercepts, random_slopes) %>% 
+  print_md()
+
+test_likelihoodratio(random_intercepts, random_slopes) %>% 
+  print_md()
+
+test_performance(random_intercepts, random_slopes) %>% 
+  print_md()
+```
+
+https://github.com/datalorax/mlm2/blob/main/static/slides/w2p1.Rmd
+lines 385-401 for individual graphs
