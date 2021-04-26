@@ -1,0 +1,382 @@
+---
+title: "Rowley_Apr30"
+author: "Brock Rowley"
+date: "4/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(performance)
+library(lubridate)
+
+cnlsy <- read_csv(here::here("data", "cnlsy.csv"))
+wages <- read_csv(here::here("data", "wages.csv"))
+sim_d <- read_csv(here::here("data", "curvilinear-sim.csv"))
+```
+
+```{r model_fit}
+cnlsy <- cnlsy %>%
+  mutate(wave_c = wave - 1)
+m_wave <- lmer(piat ~ wave_c + (wave_c|id),
+               data = cnlsy)
+
+arm::display(m_wave)
+# Note that each wave is tied to a specific age group (the approximate age of participants at that age).
+
+m_agegrp <- lmer(piat ~ agegrp + (agegrp|id),
+                 data = cnlsy,
+                 control = lmerControl(optimizer = "bobyqa"))
+
+arm::display(m_agegrp)
+```
+
+```{r centering}
+cnlsy <- cnlsy %>%
+  mutate(agegrp_c = agegrp - 6.5)
+m_agegrp2 <- lmer(piat ~ agegrp_c + (agegrp_c|id),
+                 data = cnlsy,
+                 control = lmerControl(optimizer = "bobyqa"))
+
+arm::display(m_agegrp2)
+# What does the intercept represent now?
+```
+
+```{r comparing_fit}
+compare_performance(m_agegrp, m_agegrp2) %>%
+  print_md()
+# Table: Comparison of Model Performance Indices
+# They are identical!
+```
+
+```{r plot}
+# Notice that agegrp does not always correspond directly with their actual age.
+
+ggplot(cnlsy, aes(agegrp, age)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1,
+              color = "cornflowerblue")
+# Model assumptions:
+# When we use the agegrp variable, we are assuming that all children are the exact same age at each assessment wave.
+# Although agegrp is more interpretable than wave, it doesn't solve all our problems
+```
+
+```{r intercept}
+cnlsy %>%
+  filter(wave == 1) %>%
+  count(age)
+
+# Centering
+# I'll choose to subtract 6 from each age
+# what will this value represent for students who were 6.91 years old at the first wave?
+# Backwards projection
+
+cnlsy <- cnlsy %>%
+  mutate(age6 = age - 6)
+m_age <- lmer(piat ~ age6 + (age6|id), data = cnlsy)
+arm::display(m_age)
+```
+
+```{r compare_fit}
+compare_performance(m_wave, m_agegrp2, m_age) %>%
+  print_md()
+# Table: Comparison of Model Performance Indices
+
+# Difference in predictions
+pred_frame <- cnlsy %>%
+  mutate(pred_agegrp = predict(m_agegrp2),
+         pred_age = predict(m_age)) %>%
+  filter(id %in% 1:6)
+
+ggplot(pred_frame, aes(age, piat)) +
+  geom_point() +
+  geom_line(aes(x = age6 + 6, y = pred_age),
+            color = "cornflowerblue") +
+  geom_line(aes(x = agegrp_c + 6.5, y = pred_agegrp),
+            color = "firebrick") +
+  facet_wrap(~id)
+```
+
+```{r refit}
+# Multiply age by 12 to get it coded in months.
+cnlsy <- cnlsy %>%
+  mutate(age_months = age6 * 12)
+
+m_months <- lmer(piat ~ age_months + (age_months|id), data = cnlsy,
+                 control = lmerControl(optimizer = "bobyqa"))
+arm::display(m_months)
+
+# Which model fits better? They are not actually the same
+compare_performance(m_age, m_months)
+# But they are essentially the same
+pred_frame %>%
+  mutate(pred_months = predict(m_months)[1:18]) %>%
+  select(id, starts_with("pred"))
+```
+
+## Variables
+### id: Participant ID
+### lnw: Natural log of wages
+### exper: Experience, in years
+### ged: Whether or not they completed a GED
+### black, hispanic: Dummy variables for race/ethnicity
+### hgc: Highest grade completed
+### uerate: Unemployment rate at the time
+
+```{r wages_data}
+wages %>%
+  filter(id %in% c(206, 332))
+
+# Complications = unbalanced data
+wages %>%
+  count(id) %>%
+  summarize(range = range(n))
+
+# Participants age ranged from 14-17 at first time point
+# Unequal spacing between waves
+```
+
+```{r exper}
+m_wage0 <- lmer(lnw ~ exper + (exper|id), data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+arm::display(m_wage0)
+
+# Every one year of extra experience corresponded to a 0.05 increase in log wages, on average, which varied across participants with a standard deviation of 0.04.
+```
+
+```{r centering_chanllenge}
+# Let's center highest grade completed. You could choose whatever value makes the most sense to you. I'll choose Grade 9.
+
+wages <- wages %>%
+  mutate(hgc_9 = hgc - 9)
+
+# Is this right? If not, what is it missing?
+m_wage1 <- lmer(lnw ~ exper + black + hispanic + hgc_9 +
+                  (exper|id),
+                data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+
+# Random effects
+# In the previous model, I specified exper as randomly varying across id levels.
+```
+
+```{r marginal_predictions}
+pred_frame <- expand.grid(
+  exper = 0:15,
+  black = 0:1,
+  hispanic = 0:1,
+  hgc_9 = 6:12 - 9,
+  id = -999
+)
+pred_frame <- pred_frame %>% 
+  mutate(pred = predict(m_wage1, 
+                        pred_frame, 
+                        allow.new.levels = TRUE))
+
+# Race/Ethnicity
+pred_frame <- pred_frame %>% 
+  mutate(
+    race_eth = case_when(
+      black == 0 & hispanic == 0 ~ "White",
+      black == 1 & hispanic == 0 ~ "Black",
+      black == 0 & hispanic == 1 ~ "Hispanic",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Look at just hgc_9 == 0.
+pred_frame %>%
+  drop_na() %>%
+  filter(hgc_9 == 0) %>%
+  ggplot(aes(exper, pred)) +
+  geom_line(aes(color = race_eth))
+```
+
+```{r interactions}
+# If we want to know how the slope may or may not depend on these variables, we have to model the interactions.
+
+m_wage2 <- lmer(lnw ~ exper + black + exper:black +
+                  exper:hispanic + 
+                  hgc_9 + exper:hgc_9 +
+                  (exper|id),
+                data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+
+# Make new predictions
+pred_frame <- pred_frame %>%
+  mutate(pred_int = predict(m_wage2,
+                            newdata = pred_frame,
+                            allow.new.levels = TRUE))
+
+# Plot
+pred_frame %>%
+  drop_na() %>%
+  filter(hgc_9 == 0) %>%
+  ggplot(aes(exper, pred_int)) +
+  geom_line(aes(color = race_eth))
+
+pred_frame %>%
+  drop_na() %>%
+  filter(hgc_9 == -3 | hgc_9 == 3) %>%
+  ggplot(aes(exper, pred_int)) +
+  geom_line(aes(color = race_eth)) +
+  facet_wrap(~hgc_9)
+
+# Focus on hgc
+
+pred_frame %>%
+  drop_na() %>%
+  ggplot(aes(exper, pred_int)) +
+  geom_line(aes(color = factor(hgc_9))) +
+  facet_wrap(~race_eth) +
+  scale_color_brewer("Highest grade completed",
+                     palette = "Accent",
+                     breaks = 3:-3,
+                     labels = 12:6) +
+  labs(x = "Experience (years)",
+       y = "Model Predicted wages (log scaled)")
+
+# Model summary
+arm::display(m_wage2)
+```
+
+```{r the_data_complexities}
+sim_d %>%
+  count(sid) %>%
+  summarize(range(n))
+
+# Varied "starting" points
+sim_d %>%
+  arrange(sid, date) %>%
+  group_by(sid) %>%
+  slice(1) %>%
+  ungroup() %>%
+  summarize(range(date))
+
+# Overall date range
+range(sim_d$date)
+```
+
+```{r plot_date_score}
+ggplot(sim_d, aes(date, score)) +
+  geom_point(alpha = 0.15, stroke = NA) +
+  geom_smooth(se = FALSE, color = "#33B1AE", size = 2)
+# Ideas on how to model this?
+# Linear modeling is not going to work...
+ggplot(sim_d, aes(date, score)) +
+  geom_point(alpha = 0.15, stroke = NA) +
+  geom_smooth(se = FALSE, color = "#33B1AE", size = 2) +
+  geom_smooth(se = FALSE, method = "lm", color = "#808AFF", size = 2)
+```
+
+# Fit a model
+Let's try fitting a linear model and a quadratic model and see which fits better. You try fitting the linear model first, with date predicting score, and both the intercept and slope varying across students.
+## Center date
+Let's first center date and put it in interpretable units.
+I'll center it on the first time point. First - what do dates look like when converted to numbers?
+```{r date_stuff}
+# One unit = one day.
+as_date(0)
+as_date(1)
+
+# Center
+sim_d <- sim_d %>%
+  mutate(
+    days_from_start = as.numeric(date) - min(as.numeric(date))
+  )
+
+# Fit linear model
+linear <- lmer(score ~ days_from_start + (days_from_start|sid), 
+               data = sim_d,
+               control = lmerControl(optimizer = "Nelder_Mead"))
+arm::display(linear)
+
+# Fit quadratic model
+sim_d <- sim_d %>%
+  mutate(days2 = days_from_start^2)
+quad <- lmer(score ~ days_from_start + days2 + 
+               (days_from_start|sid), 
+             data = sim_d,
+             control = lmerControl(optimizer = "Nelder_Mead"))
+arm::display(quad)
+
+# Compare
+anova(linear, quad)
+
+# Plot predictions
+pred_frame <- tibble(
+    days_from_start = 0:max(sim_d$days_from_start),
+    days2 = days_from_start^2,
+    sid = -999
+  ) %>%
+  mutate(pred_linear = predict(linear, newdata = ., allow.new.levels = TRUE),
+         pred_quad = predict(quad, newdata = ., allow.new.levels = TRUE))
+pred_frame
+
+ggplot(pred_frame, aes(days_from_start)) +
+  geom_point(aes(y = score), data = sim_d, color = "gray80") +
+  geom_line(aes(y = pred_linear), color = "#33B1AE") +
+  geom_line(aes(y = pred_quad), color = "#808AFF")
+
+#This is definitely looking better, but it's too high in the lower tail and maybe a bit too low in the upper
+```
+
+```{r cubic}
+sim_d <- sim_d %>%
+  mutate(days3 = days_from_start^3)
+cubic <- lmer(score ~ days_from_start + days2 + days3 +
+                (days_from_start|sid), 
+             data = sim_d,
+             control = lmerControl(optimizer = "Nelder_Mead"))
+
+arm::display(cubic)
+
+# Compare
+anova(linear, quad, cubic)
+
+# Predictions
+pred_frame <- pred_frame %>%
+  mutate(days3 = days_from_start^3)
+pred_frame %>%
+  mutate(pred_cubic = predict(cubic, newdata = ., allow.new.levels = TRUE)) %>%
+  ggplot(aes(days_from_start)) +
+  geom_point(aes(y = score), data = sim_d, color = "gray80") +
+  geom_line(aes(y = pred_linear), color = "#33B1AE") +
+  geom_line(aes(y = pred_quad), color = "#808AFF") +
+  geom_line(aes(y = pred_cubic), color = "#ff66fa")
+```
+
+```{r try_log}
+sim_d <- sim_d %>%
+  mutate(days_log = log(days_from_start + 1))
+log_m <- lmer(score ~ days_log + (days_log|sid),
+              data = sim_d)
+arm::display(log_m)
+
+# Compare
+anova(linear, quad, cubic, log_m)
+# It use the same number of parameters as the linear model, but fits far better.
+
+# Predictions
+pred_frame <- pred_frame %>%
+  mutate(days_log = log(days_from_start + 1))
+pred_frame <- pred_frame %>%
+  mutate(pred_log = predict(log_m, newdata = ., allow.new.levels = TRUE))
+
+# Predictions on log scale
+ggplot(pred_frame, aes(days_log)) +
+  geom_point(aes(y = score), data = sim_d, color = "gray80") +
+  geom_line(aes(y = pred_log), color = "#4D4F57")
+
+# Predictions on raw scale
+pred_frame %>%
+  mutate(pred_cubic = predict(cubic, newdata = ., allow.new.levels = TRUE)) %>%
+  ggplot(aes(days_from_start)) +
+  geom_point(aes(y = score), data = sim_d, color = "gray80") +
+  geom_line(aes(y = pred_linear), color = "#33B1AE") +
+  geom_line(aes(y = pred_quad), color = "#808AFF") +
+  geom_line(aes(y = pred_cubic), color = "#ff66fa") +
+  geom_line(aes(y = pred_log), color = "#4D4F57")
+```

@@ -12,19 +12,13 @@ library(lme4)
 library(equatiomatic)
 library(TMB)
 library(dfoptim)
-library(sundry)
-library(nlme)
-library(performance)
-
+install.packages("remotes")
+remotes::install_github("DJAnderson07/sundry")
 popular <- read_csv(here::here("data", "popularity.csv"))
-
 willett <- read_csv(here::here("data", "willett-1988.csv"))
-```
 
-```{r data_model}
 m <- lmer(popular ~ extrav + (extrav|class), popular,
           control = lmerControl(optimizer = "bobyqa"))
-# extrav is a measure of extraversion.
 
 arm::display(m)
 
@@ -36,7 +30,6 @@ ggplot(popular, aes(extrav, popular)) +
 
 # ˆpopular = 3.27 + 0.35(extrav)
 ```
-
 
 ```{r sample_preds}
 sample_preds <- popular %>%
@@ -111,11 +104,11 @@ arm::display(m2)
 
 # Marginal effect
 # Interaction between extraversion and sex
-conditions2 <- expand.grid(extrav = 1:10,
-                           sex = c("girl", "boy"),
-                           class = 0) %>%
-  mutate(pred = predict(m2,
-                        newdata = .,
+conditions2 <- expand.grid(extrav = 1:10, 
+                           sex = c("girl", "boy"), 
+                           class = 0) %>% 
+  mutate(pred = predict(m2, 
+                        newdata = ., 
                         allow.new.levels = TRUE))
 conditions2
 
@@ -191,11 +184,12 @@ extract_eq(hsb_m2)
 hsb_m3 <- lmer(math ~ ses * sector + (ses|sch.id), data = hsb,
                control = lmerControl(optimizer = "nmkbw"))
 extract_eq(hsb_m3)
+```
 
-#Even more complicagted
+```{r bad_model}
 hsb_m4 <- lmer(
   math ~ ses * sector + minority + female + meanses + size +
-    (ses + minority + female|sch.id), 
+    (ses + minority + female|sch.id),
   data = hsb
 )
 extract_eq(hsb_m4)
@@ -204,7 +198,7 @@ extract_eq(hsb_m4)
 ```{r multiple_levels}
 head(sim_longitudinal)
 
-# Four levels, model doesn't really fit again
+# Model doesn't really fit again
 sl_m <- lmer(
   score ~ wave*treatment + group + prop_low +
     (wave|sid) + (wave + treatment| school) + (1|district),
@@ -217,117 +211,10 @@ extract_eq(sl_m)
 bad <- lm(opp ~ time, data = willett)
 summary(bad)
 
-# Fit a parallel slopes model with the Willett data
+# Fit a parallel slopes model with Willett data
 w0 <- lmer(opp ~ time + (1|id), willett)
 
-# Use sundry to pull the residual variance-covariance
+# Use sundry to pull residual variance-covariance
 w0_rvcv <- pull_residual_vcov(w0)
-
-# Sparse matrix - view with image()
-image(w0_rvcv)
-
-# Pull first few rows/cols
-w0_rvcv[1:8, 1:8]
-
-# Look at the model output
-arm::display(w0)
-
-# Extract the variance components from the model
-vars_w0 <- as.data.frame(VarCorr(w0))
-vars_w0
-# The diagonals are given by sum(vars_w0)$vcov while the off-diagonals are just the intercept variance
-```
-
-```{r composite_residual}
-w1 <- lmer(opp ~ time + (time|id), willett)
-w1_rvcv <- pull_residual_vcov(w1)
-w1_rvcv[1:4, 1:4]
-
-# Unstructured
-# The model we fit has an unstructured variance co-variance matrix. While each block is the same, every element of the block is now estimated.
-
-# Get the pieces
-vars_w1 <- as.data.frame(VarCorr(w1))
-int_var <- vars_w1$vcov[1]
-slope_var <- vars_w1$vcov[2]
-covar <- vars_w1$vcov[3]
-residual <- vars_w1$vcov[4]
-
-# Calculate
-diag(w1_rvcv[1:4, 1:4])
-residual + int_var
-residual + int_var + 2*covar + slope_var
-residual + int_var + (2*covar)*2 + slope_var*2^2
-residual + int_var + (2*covar)*3 + slope_var*3^2
-
-# Calculate a few
-w1_rvcv[1:4, 1:4]
-int_var + covar*(1 + 0) + slope_var*1*0
-int_var + covar*(2 + 1) + slope_var*2*1
-int_var + covar*(3 + 2) + slope_var*3*2
-int_var + covar*(2 + 0) + slope_var*2*0
-```
-
-```{r fit}
-ar <- gls(opp ~ time, 
-          data = willett,
-          correlation = corAR1(form = ~ 1|id))
-summary(ar)
-
-# Extract composite residual
-# all of them
-cm_ar <- corMatrix(ar$modelStruct$corStruct)
-# just the first (they're all the same)
-cr_ar <- cm_ar[[1]]
-cr_ar
-
-# Multiply the correlation matrix by the model residual variance to get the covariance matrix
-cr_ar * sigma(ar)^2
-
-# Confirming calculations
-sigma(ar)^2
-sigma(ar)^2*0.8249118
-sigma(ar)^2*0.8249118^2
-sigma(ar)^2*0.8249118^3
-```
-
-```{r varIdent}
-har <- gls(
-  opp ~ time,
-  data = willett,
-  correlation = corAR1(form = ~ 1|id),
-  weights = varIdent(form = ~1|time)
-)
-summary(har)
-```
-
-```{r extract_compute_comp_residual}
-cm_har <- corMatrix(har$modelStruct$corStruct)[[1]]
-var_struct <- har$modelStruct$varStruct
-vars <- coef(var_struct, unconstrained = FALSE, allCoef = TRUE)
-vars <- matrix(vars, ncol = 1)
-cm_har * sigma(har)^2 *
-  (vars %*% t(vars)) # multiply by a mat of vars
-```
-
-```{r toeplitz}
-# Fit
-toep <- gls(opp ~ time, 
-            data = willett,
-            correlation = corARMA(form = ~ 1|id, p = 3))
-summary(toep)
-
-# Extract/compute composite residual
-# Same as with autoregressive - just multiply the correlation matrix by the residual variance.
-cr_toep <- corMatrix(toep$modelStruct$corStruct)[[1]] 
-cr_toep * sigma(toep)^2
-```
-
-```{r comparing_fits}
-# We have slight evidence here that the Toeplitz structure fits
-compare_performance(ar, har, toep, w1,
-                    metrics = c("AIC", "BIC"),
-                    rank = TRUE) %>%
-  as_tibble()
 ```
 
