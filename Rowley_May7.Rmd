@@ -16,11 +16,101 @@ library(nlme)
 cnlsy <- read_csv(here::here("data", "cnlsy.csv"))
 wages <- read_csv(here::here("data", "wages.csv"))
 sim_d <- read_csv(here::here("data", "curvilinear-sim.csv"))
+d <- read_csv(here::here("data", "longitudinal-sim.csv"))
+```
+
+```{r}
+m1a <- lmer(g5_spring ~ g4_spring + g3_spring + 
+              (1|scid) + (1|distid),
+            data = d)
+
+m1b <- lmer(g5_spring ~ g4_spring + g3_spring + (1|distid/scid),
+            data = d)
+
+m1c <- lmer(g5_spring ~ g4_spring + g3_spring + 
+              (1|distid) + (1|distid:scid),
+            data = d)
+
+```
+
+```{r}
+d <- d %>%
+  group_by(scid) %>%
+  mutate(sch_mean_start = mean(g3_fall)) %>%
+  group_by(distid) %>%
+  mutate(dist_mean_start = mean(g3_fall))
+
+m2 <- lmer(g5_spring ~ g4_spring + g3_spring + 
+             sch_mean_start + 
+             (g3_spring|scid) + (1|distid),
+          data = d)
+extract_eq(m2, font_size = "small")
+
+m3 <- lmer(g5_spring ~ g4_spring + g3_spring + 
+             sch_mean_start + 
+             (g4_spring + g3_spring|scid) + (g4_spring + g3_spring|distid),
+          data = d)
+extract_eq(m3, font_size = "small")
+
+m4 <- lmer(g5_spring ~ g4_spring + g3_spring + 
+             sch_mean_start + sch_mean_start:g3_spring +
+             (g4_spring + g3_spring|scid) + 
+             (g4_spring + g3_spring|distid),
+          data = d)
+extract_eq(m4, font_size = "small")
+
+m5 <- lmer(g5_spring ~ g4_spring + g3_spring + 
+             dist_mean_start +
+             (g4_spring + g3_spring||scid) + (g4_spring + g3_spring||distid),
+          data = d)
+extract_eq(m5, font_size = "small")
+
+# double bar || forces all the off diagonals to be zero
+```
+
+```{r}
+l <- d %>% 
+  pivot_longer(
+    cols = starts_with("g"),
+    names_to = "timepoint",
+    values_to = "score"
+  )
+l
+
+wave_frame <- tibble(
+  timepoint = paste0(
+    "g", 
+    rep(3:5, each = 3), 
+    rep(c("_fall", "_winter", "_spring"), 3)
+  ),
+  wave = 0:8
+)
+wave_frame
+
+l <- left_join(l, wave_frame)
+l
+
+m6 <- lmer(score ~ wave +
+             (wave|sid) + (wave|scid) + (1|distid),
+          data = l)
+extract_eq(m6)
+
+m7 <- lmer(score ~ wave + sch_mean_start + dist_mean_start +
+             wave:sch_mean_start + wave:dist_mean_start +
+             (wave|sid) + (wave|scid) + (sch_mean_start|distid),
+          data = l)
+extract_eq(m7, font_size = "scriptsize")
+
+m8 <- lmer(score ~ wave * sch_mean_start + dist_mean_start +
+             (wave|sid),
+          data = l)
+extract_eq(m8, font_size = "scriptsize")
 ```
 
 ```{r model_fit}
 cnlsy <- cnlsy %>%
-  mutate(wave_c = wave - 1)
+  mutate(wave_c = wave - 1) # average score at first timepoint, needs to be zero (0)
+
 m_wave <- lmer(piat ~ wave_c + (wave_c|id),
                data = cnlsy)
 
@@ -32,17 +122,19 @@ m_agegrp <- lmer(piat ~ agegrp + (agegrp|id),
                  control = lmerControl(optimizer = "bobyqa"))
 
 arm::display(m_agegrp)
+# Not possible because it predicts students at zero years old
 ```
 
 ```{r centering}
 cnlsy <- cnlsy %>%
-  mutate(agegrp_c = agegrp - 6.5)
+  mutate(agegrp_c = agegrp - 6.5) # average score at 6.5 years old
 m_agegrp2 <- lmer(piat ~ agegrp_c + (agegrp_c|id),
                  data = cnlsy,
                  control = lmerControl(optimizer = "bobyqa"))
 
 arm::display(m_agegrp2)
 # What does the intercept represent now?
+# Students at 6.5 years old
 ```
 
 ```{r comparing_fit}
@@ -50,6 +142,47 @@ compare_performance(m_agegrp, m_agegrp2) %>%
   print_md()
 # Table: Comparison of Model Performance Indices
 # They are identical!
+
+pred_frame <- tibble(
+  agegrp = 0:12,
+  agegrp_c = 0:12,
+  id = -999
+  ) %>%  
+  mutate(pred_raw = predict(m_agegrp, newdata = ., allow.new.levels = TRUE),
+         pred_c = predict(m_agegrp2, newdata = ., allow.new.levels = TRUE))
+
+points <- data.frame(
+  pred_raw = c(fixef(m_agegrp)[1], fixef(m_agegrp2)[1]),
+  agegrp = c(0, 6.5),
+  color = c("cyan", "magenta")
+)
+
+ggplot(pred_frame, aes(agegrp, pred_raw)) +
+  geom_line(color = "cornflowerblue",
+            size = 5) +
+  geom_line(aes(agegrp_c + 6.5, y = pred_c),
+            color = "firebrick",
+            size = 2) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_segment(x = 0, xend = 0, 
+               y = 0, yend = fixef(m_agegrp)[1],
+               color = "cyan",
+               linetype = "dashed") +
+  geom_segment(x = 0, xend = 6.5, 
+               y = fixef(m_agegrp2)[1], yend = fixef(m_agegrp2)[1],
+               color = "magenta",
+               linetype = "dashed") +
+  geom_segment(x = 6.5, xend = 6.5, 
+               y = 0, yend = fixef(m_agegrp2)[1],
+               color = "magenta",
+               linetype = "dashed") +
+  geom_point(aes(color = color), points, size = 4) +
+  guides(color = "none") +
+  scale_color_identity() +
+  xlim(-5, 20) +
+  ylim(-15, 85) +
+  labs(x = "Age", y = "Prediction")
 ```
 
 ```{r plot}
@@ -169,11 +302,11 @@ pred_frame <- expand.grid(
   black = 0:1,
   hispanic = 0:1,
   hgc_9 = 6:12 - 9,
-  id = -999
+  id = -999 # just use fixed effects
 )
-pred_frame <- pred_frame %>% 
-  mutate(pred = predict(m_wage1, 
-                        pred_frame, 
+pred_frame <- pred_frame %>%
+  mutate(pred = predict(m_wage1,
+                        pred_frame,
                         allow.new.levels = TRUE))
 
 # Race/Ethnicity
@@ -281,7 +414,7 @@ I'll center it on the first time point. First - what do dates look like when con
 # One unit = one day.
 as_date(0)
 as_date(1)
-
+as_date(470)
 # Center
 sim_d <- sim_d %>%
   mutate(
@@ -321,7 +454,8 @@ ggplot(pred_frame, aes(days_from_start)) +
   geom_line(aes(y = pred_linear), color = "#33B1AE") +
   geom_line(aes(y = pred_quad), color = "#808AFF")
 
-#This is definitely looking better, but it's too high in the lower tail and maybe a bit too low in the upper
+# This is definitely looking better, but it's too high in the lower tail and maybe a bit too low in the upper.
+# Interpret as "one this day, at this time... score equals"
 ```
 
 ```{r cubic}
