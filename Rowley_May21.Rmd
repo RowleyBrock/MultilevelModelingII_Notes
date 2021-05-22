@@ -1,0 +1,547 @@
+---
+title: "Rowley_May21"
+author: "Brock Rowley"
+date: "5/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(carData)
+library(brms)
+library(tidybayes)
+library(tictoc)
+library(cmdstanr)
+library(broom.mixed)
+library(cmdstanr)
+
+popular <- read_csv(here::here("data", "popularity.csv"))
+
+d <- read_csv(here::here("data", "three-lev.csv"))
+
+wages <- read_csv(here::here("data", "wages.csv")) %>%
+  mutate(hourly_wage = exp(lnw))
+
+polls <- rio::import(here::here("data", "polls.dta"),
+                     setclass = "tbl_df")
+```
+
+```{r model_practice}
+model1 <- lmer(math ~ mobility + (1|schid), data = d)
+
+model2 <- lmer(math ~ year + female + mobility +
+                 (year|sid) +  (1|schid),
+               data = d)
+
+model3 <- lmer(math ~ year * black + year * hispanic + female + mobility +
+                 (year|sid) +  (1|schid),
+               data = d)
+
+model4 <- lmer(math ~ year * female + year * mobility + lowinc +
+                 (year|sid) +  (year + female|schid),
+               data = d)
+
+model5 <- lmer(math ~ year * female + mobility + lowinc +
+                 (year|sid) +  (year * female||schid),
+               data = d)
+
+model8 <- lmer(math ~ year * lowinc + female +
+                 (year|sid) + (year|schid),
+               data = d)
+```
+
+# Bayes for regression
+# Implementation with {brms}
+
+# What is it?
+* **b**ayesian **r**egression **m**odeling with **s**tan
+* Uses [stan](https://mc-stan.org/) as the model backend - basically writes the model code for you then sends it to stan
+* Allows model syntax similar to **lme4**
+* Simple specification of priors - defaults are flat
+* Provides many methods for post-model fitting inference
+
+# In Code
+```{r mcmc_}
+dnorm(110, 100, 15)
+dnorm(108, 100, 15)
+
+#Let's take 5000 samples
+set.seed(42) # for reproducibility
+samples <- c(
+  110, # initial guess
+  rep(NA, 4999)) # space for subsequent samples to fill in
+  
+# LOOP
+for(i in 2:5000) {
+  # generate proposal distribution
+  proposal <- rnorm(1, mean = samples[i - 1], sd = 10)
+  # calculate current/proposal distribution likelihoood
+  prob_current <- dnorm(samples[i - 1], 100, 15)
+  prob_proposal <- dnorm(proposal, 100, 15)
+  # compute the probability ratio
+  prob_ratio <- prob_proposal / prob_current
+  # Determine which to select
+  if(prob_ratio > runif(1)) {
+    samples[i] <- proposal # accept
+  } else {
+    samples[i] <- samples[i - 1] # reject
+  }
+}
+
+#PLOT
+tibble(iteration = 1:5000,
+       value = samples) %>% 
+  ggplot(aes(iteration, value)) +
+  geom_line() +
+  geom_hline(yintercept = 100, 
+             color = "magenta",
+             size = 3)
+
+#Density Plot
+tibble(iteration = 1:5000,
+       value = samples) %>%
+  ggplot(aes(value)) +
+  geom_density(fill = "#00b4f5",
+               alpha = 0.7) +
+  geom_vline(xintercept = 100,
+             color = "magenta",
+             size = 3)
+```
+
+# Fit a basic model
+## Let's start with the default (uninformative) priors, and fit a standard, simple-linear regression model
+```{r }
+sleep_m0 <- brm(Reaction ~ Days, data = lme4::sleepstudy)
+```
+
+# Model summary
+
+```{r }
+summary(sleep_m0)
+```
+
+# View fixed effect
+## Let's look at our estimated relation between `Days` and `Reaction`
+
+```{r fixed_effect}
+conditional_effects(sleep_m0)
+```
+
+# Wrong model
+## Of course, this is the wrong model, we have a multilevel structure
+```{r echo = FALSE, message = FALSE}
+ggplot(lme4::sleepstudy, aes(Days, Reaction)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~Subject) +
+  theme_minimal(15)
+```
+
+# Multilevel model
+## Notice the syntax is essentially equivalent to **lme4**
+```{r eval = FALSE}
+sleep_m1 <- brm(Reaction ~ Days + (Days | Subject), data = lme4::sleepstudy)
+summary(sleep_m1)
+```
+
+# Fixed effect
+## The uncertainty has increased
+```{r }
+conditional_effects(sleep_m1)
+```
+
+# Checking your model
+```{r }
+pp_check(sleep_m1)
+```
+
+# More checks
+```{r }
+plot(sleep_m1)
+```
+
+# Even more
+```{r eval = FALSE}
+launch_shinystan(sleep_m1)
+
+#Two primary (modern) methods:
+  #Leave-one-out Cross-Validation (LOO)
+  #Widely Applicable Information Criterion (WAIC)
+```
+
+# LOO: MO
+```{r}
+loo(sleep_m0)
+loo(sleep_m1)
+
+# PLOT
+plot(loo(sleep_m1), label_points = TRUE)
+
+# LOO Compare
+loo_compare(loo(sleep_m0), loo(sleep_m1))
+```
+
+# WAIC = simular to other information criteria
+```{r waic_}
+waic(sleep_m0)
+waic(sleep_m1)
+
+# Compare = Use waic within loo_compare()
+loo_compare(waic(sleep_m0), waic(sleep_m1))
+```
+
+# Another model
+```{r eval = FALSE}
+kidney_m0 <- brm(time ~ age + sex, data = kidney)
+pp_check(kidney_m0, type = "ecdf_overlay")
+```
+
+# Fixing this
+## We need to change the assumptions of our model - specifically that the outcome is not normally distributed
+```{r plot_raw}
+ggplot(kidney, aes(time)) +
+  geom_histogram(alpha = 0.7)
+```
+
+## Maybe Poisson?
+```{r eval = FALSE}
+kidney_m1 <- brm(time ~ age + sex, data = kidney, family = poisson())
+```
+
+# Nope
+```{r }
+pp_check(kidney_m1, type = "ecdf_overlay")
+```
+
+# Gamma w/log link
+```{r eval = FALSE}
+kidney_m2 <- brm(time ~ age + sex, data = kidney, family = Gamma("log"))
+pp_check(kidney_m2, type = "ecdf_overlay")
+```
+
+# Specifying priors
+## Let's sample from *only* our priors to see what kind of predictions we get.
+
+## Here, we're specifying that our beta coefficient prior is $\beta \sim N(0, 0.5)$ 
+```{r eval = FALSE}
+kidney_m3 <- brm(
+  time ~ age + sex,
+  data = kidney,
+  family = Gamma("log"),
+  prior = prior(normal(0, 0.5), class = "b"),
+  sample_prior = "only"
+)
+
+kidney_m3
+```
+
+# Prior predictions
+## Random sample of 100 points
+```{r echo = FALSE}
+kidney %>%
+  tidybayes::add_fitted_draws(kidney_m3) %>%
+  ungroup() %>% 
+  sample_n(100) %>%
+  ggplot(aes(time, .value)) +
+  geom_point() +
+  facet_wrap(~sex) +
+  scale_y_log10(labels = scales::comma)
+```
+
+# Why?
+## It seemed like our prior was fairly tight
+
+## The exploding prior happens because of the log transformation
+* Age is coded in years
+* Imagine a coef of 1 (2 standard deviations above our prior)
+* Prediction for a 25 year old would be exp(25) = `r round(exp(25), 3)`
+
+# A note on prior specifications
+* It's hard
+* I don't have a ton of good advice
+* Be particularly careful when you're using distributions that have anything other than an identity link (e.g., log link, as we are here)
+
+# One more model
+## Let's fit a model we've fit previously
+
+#In Week 4, we fit this model
+```{r }
+m_lmer <- lmer(popular ~ extrav + (extrav|class), popular,
+               control = lmerControl(optimizer = "bobyqa"))
+```
+
+# Try fitting the same model with **{brms}** with the default, diffuse priors
+
+# Bayesian verision
+```{r bayesian_verision}
+m_brms <- brm(popular ~ extrav + (extrav|class), popular)
+
+summary(m_lmer)
+
+# brms model
+m_brms
+```
+
+# Specify some new priors
+```{r regularizing_priors}
+priors <- c(
+  prior(normal(0, 0.5), class = b),
+  prior(cauchy(0, 1), class = sd)
+)
+m_brms2 <- brm(popular ~ extrav + (extrav|class), 
+               data = popular,
+               prior = priors)
+m_brms2
+```
+
+# Timings
+```{r timings}
+tic()
+m_brms <- brm(popular ~ extrav + (extrav|class), 
+              data = popular)
+toc()
+tic()
+m_brms2 <- brm(popular ~ extrav + (extrav|class), 
+               data = popular,
+               backend = "cmdstanr")
+toc()
+```
+
+# Plotting the Bayes fit
+```{r fig.height = 5}
+tibble(extrav = 1:10, class = 0) %>%
+  add_fitted_draws(m_brms, allow_new_levels = TRUE, n = 100) %>%
+  ggplot(aes(extrav, .value)) +
+  geom_line(aes(group = .draw), size = 0.1)
+```
+
+# Wrapping up
+
+# Advantages to Bayes
+* Opportunity to incorporate prior knowledge into the modeling process (you don't really *have* to - could just set wide priors)
+* Natural interpretation of uncertainty
+* Can often allow you to estimate models that are difficult if not impossible with frequentist methods
+
+## Disadvatages
+
+* Generally going to be slower in implementation
+* You may run into pushback from others - particularly with respect to prior
+
+# Notes on the posterioir
+* The posterior is the distribution of the parameters, given the data
+* You can think of it as the distribution of what we don't know, but are interested in (the model parameters), given what we know or have observed (the data), and our prior beliefs
+* Gives a complete picture of parameter uncertainty
+* We can do lots of things with the posterior that is hard to get otherwise
+* Next time, we'll discuss how missing values can be treated as unknown variables (parameters) in the model, and imputed from the posterior
+
+# Data generating distribution
+```{r wages}
+wages_lm <- lm(hourly_wage ~ exper, data = wages)
+
+# Graphically (log of wages was modeled instead?)
+ggplot(wages, aes(exper, hourly_wage)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+#Move to binary model
+wages <- wages %>%
+  mutate(
+    high_wage = ifelse(
+      hourly_wage > mean(hourly_wage, na.rm = TRUE), 1, 0
+    )
+  )
+wages %>%
+  select(id, hourly_wage, high_wage)
+
+# Plot
+means <- wages %>%
+  group_by(high_wage) %>%
+  summarize(mean = mean(exper))
+ggplot(wages, aes(exper, high_wage)) +
+  geom_point(alpha = 0.01) +
+  geom_point(aes(x = mean), data = means,
+             shape = 23,
+             fill = "cornflowerblue")
+
+# fit a linear model
+m_lpm <- lm(high_wage ~ exper, data = wages)
+summary(m_lpm)
+# This is referred to as a linear probability model (LPM) and they are pretty hotly contested, with proponents and detractors.
+
+# Plot
+ggplot(wages, aes(exper, high_wage)) +
+  geom_point(alpha = 0.01) +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+# Prediction
+## What if somebody has an experience of 25 years?
+```{r prediction}
+predict(m_lpm, newdata = data.frame(exper = 25))
+
+# Prediction goes outside the range of our data.
+# As a rule, the assumed data generating process should match the boundaries of the data.
+```
+
+# The binomial model
+```{r binomial_model}
+# Flip 1 coin 10 times
+set.seed(42)
+rbinom(
+  n = 10, # number of trials
+  size = 1, # number of coins
+  prob = 0.5 # probability of heads
+)
+#Side note - a binomial model with size = 1 (or n = 1 in equation form) is equivalent to a Bernoulli distribution.
+
+# Flip 10 coins 1 time
+rbinom(n = 1, size = 10, prob = 0.5)
+
+# Probability is bounded [0,1] and we need to ensure that our model respects these bounds.
+
+# Logistic regression model
+m_glm <- glm(high_wage ~ exper,
+             data = wages, 
+             family = binomial(link = "logit"))
+summary(m_glm)
+# Coefficient interpretation: coefficients are reported on the log-odds scale. Other than that, interpretation is the same.
+
+# Log Odds Scale
+tibble(exper = 0:25) %>%
+  mutate(pred = predict(m_glm, newdata = .)) %>%
+  ggplot(aes(exper, pred)) +
+  geom_line()
+# Perfectly straight line - change in log-odds are modeled as a linear function of experience
+
+# Probability Scale
+tibble(exper = 0:25) %>%
+  mutate(pred = predict(m_glm,
+                        newdata = .,
+                        type = "response")) %>%
+  ggplot(aes(exper, pred)) +
+  geom_line()
+# Our model parameters map to probability non-linearly, and it is bound to [0,1]
+```
+
+```{r probability_predictions}
+# Let's make the predictions from the previous slide "by hand"
+# Coefficients are:
+coef(m_glm)
+```
+
+# Mulilevel Logistic Regression
+```{r polling_data}
+polls
+
+bush_sl <- glm(bush ~ 1,
+               data = polls,
+               family = binomial(link = "logit"))
+summary(bush_sl)
+
+# Fitting the model
+m0 <- glmer(bush ~ 1 + (1|state),
+           data = polls,
+           family = binomial(link = "logit"))
+summary(m0)
+
+# State-level variation
+m0_tidied <- tidy(m0, effects = "ran_vals", conf.int = TRUE)
+m0_tidied
+
+# Fancified Plot Code
+m0_tidied %>%
+  mutate(level = forcats::fct_reorder(level, estimate)) %>%
+  ggplot(aes(estimate, level)) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  geom_point(aes(color = estimate)) +
+  geom_vline(xintercept = 0, color = "gray40", size = 3) +
+  labs(x = "Log-Odds Estimate", y = "") +
+  colorspace::scale_color_continuous_diverging(palette = "Blue-Red 2") +
+  guides(color = "none") +
+  theme(panel.grid.major.y = element_blank(),
+        axis.text.y = element_blank())
+
+# Extending the model
+polls <- polls %>%
+  mutate(age_c = age - mean(age, na.rm = TRUE))
+m1 <- glmer(bush ~ age_c + female + black + (1|state),
+            data = polls,
+            family = binomial(link = "logit"))
+summary(m1)
+
+# Vary by state?
+m2 <- glmer(bush ~ age_c + female + black + (black|state),
+            data = polls,
+            family = binomial(link = "logit"))
+summary(m2)
+
+# Random Effects
+ranef_m2 <- tidy(m2, effects = "ran_vals", conf.int = TRUE) %>%
+  arrange(level)
+ranef_m2
+
+# Fixed Effects
+fe <- data.frame(
+  fixed = fixef(m2),
+  term = names(fixef(m2))
+)
+fe
+
+ranef_m2 <- left_join(ranef_m2, fe)
+ranef_m2 %>%
+  select(level, term, estimate, fixed)
+
+ranef_m2 <- ranef_m2 %>%
+  mutate(estimate = estimate + fixed)
+ranef_m2
+
+# Compute log-odds
+to_plot <- ranef_m2 %>%
+  group_by(level) %>%
+  mutate(estimate = cumsum(estimate)) %>%
+  ungroup()
+to_plot
+
+#Crate factor level
+lev_order <- to_plot %>%
+  filter(term == "(Intercept)") %>%
+  mutate(lev = forcats::fct_reorder(level, estimate))
+to_plot <- to_plot %>%
+  mutate(level = factor(level, levels = levels(lev_order$lev)))
+
+# data transform
+to_plot %>%
+  mutate(
+    group = ifelse(term == "(Intercept)", "Non-Black", "Black"),
+    prob = exp(estimate)/(1 + exp(estimate))
+  ) %>%
+  # plot
+  ggplot(aes(prob, level)) +
+  geom_line(aes(group = level), color = "gray60", size = 1.2) +
+  geom_point(aes(color = group)) +
+  geom_vline(xintercept = 0.5, color = "gray40", size = 3) +
+  # themeing stuff
+  labs(x = "Probability Estimate", y = "") +
+  xlim(0, 1) +
+  scale_color_brewer(palette = "Set2") +
+  theme(panel.grid.major.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+# Bayes
+```{r flat_priors}
+m2_brms <- brm(bush ~ age + female + black + (black|state),
+            data = polls,
+            family = bernoulli(link = "logit"),
+            backend = "cmdstan",
+            cores = 4)
+summary(m2_brms)
+
+# Posterior predictive check
+pp_check(m2_brms, type = "bars")
+
+# Posterior predictive check 2
+pp_check(m2_brms, type = "stat")
+```

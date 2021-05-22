@@ -14,6 +14,35 @@ library(brms)
 library(tidybayes)
 
 popular <- read_csv(here::here("data", "popularity.csv"))
+mplus_d <- read_csv(here::here("data", "mplus920.csv"))
+```
+
+```{r models}
+model1 <- lmer(score ~ 1 + (1|distid), data = mplus_d)
+
+model2 <- lmer(score ~ baseline + (1|schid) + (1|distid),
+     data = mplus_d)
+
+model3 <- lmer(score ~ baseline * dist_ses +
+       (baseline|schid) + (1|distid),
+     data = mplus_d)
+
+model4 <- lmer(score ~ baseline + sch_treatment + dist_ses + 
+       (baseline|schid) + (1|distid),
+     data = mplus_d)
+
+model5 <- lmer(score ~ baseline * sch_treatment + dist_ses + 
+       (baseline|schid) + (sch_treatment|distid), # missed the random effect here
+     data = mplus_d)
+
+model6 <- lmer(score ~ baseline * sch_treatment + dist_ses + 
+       (baseline|schid) + 
+       (baseline * sch_treatment||distid), # double pipe for just variance not covariance
+           data = mplus_d)
+
+final_model <- lmer(score ~ baseline * sch_treatment * dist_ses + 
+             (baseline|schid) + (baseline|distid),
+           data = mplus_d)
 ```
 
 ```{r carData}
@@ -22,6 +51,7 @@ iqs
 
 ggplot(data.frame(x = c(60, 140)), aes(x)) +
   stat_function(fun = ~dnorm(., 100, 15))
+dnorm(80, mean = 100, sd = 15)
 ```
 
 # Likelihood
@@ -43,13 +73,6 @@ ggplot(data.frame(x = c(60, 140)), aes(x)) +
 
 dnorm(80, mean = 100, sd = 15)
 ```
-
---
-
-```{r }
-
-```
-
 ---
 # Likelihood of the data
 We sum the likelihood to get the overall likelihood of the data. However, this leads to very small numbers. Computationally, it's easier to sum the *log* of these likelihoods.
@@ -63,13 +86,13 @@ sum(dnorm(iqs, mean = 100, sd = 15, log = TRUE))
 ```
 
 # Alternative distributions
-# What if we assumed the data were generated from an alternative distribution, say $IQ_i \sim N(115, 5)$?
+## What if we assumed the data were generated from an alternative distribution, say $IQ_i \sim N(115, 5)$?
 
 ```{r }
 sum(dnorm(iqs, mean = 115, sd = 5, log = TRUE))
 ```
 
-# # The value is *much* lower. In most models, we are estimating $\mu$ and $\sigma$, and trying to find values that *maximize* the sum of the log likelihoods.
+## The value is *much* lower. In most models, we are estimating $\mu$ and $\sigma$, and trying to find values that *maximize* the sum of the log likelihoods.
 
 # Visually
 ## The real data generating distribution
@@ -130,37 +153,30 @@ $$
 \widehat{\mu} = \alpha &+ \beta_{1}(\operatorname{class}_{\operatorname{low}}) + \beta_{2}(\operatorname{class}_{\operatorname{medium}})
 \end{align}
 $$
-
-## class: inverse-red middle
-
 # Priors
-
 ## Bayesian posterior
 
 $$
 \text{posterior} = \frac{ \text{likelihood} \times \text{prior}}{\text{average likelihood}}
 $$
-
 ## The above is how we estimate with Bayes.
 ## In words, it states that our updated beliefs (posterior) depend on the evidence from our data (likelihood) and our prior knowledge/conceptions/information (prior).
 ## Our prior will shift in accordance with the evidence from the data
-
 
 # Basic example
 ## Let's walk through a basic example where we're just estimating a mean. We'll assume we somehow magically know the variance. Please follow along.
 
 ## First, generate some data
-
 ```{r }
 set.seed(123)
-true_data <- rnorm(50, 5, 1)
+true_data <- rnorm(50, 5, 1) # give me some sample from a distribution. 50 data, mean of 5, SD 1
 ```
 
 # Grid search
 ## We're now going to specify a grid of possible means for our data. Let's search anywhere from -3 to 12 in 0.1 intervals.
 
 ```{r }
-grid <- tibble(possible_mean = seq(-3, 12, 0.1))
+grid <- tibble(possible_mean = seq(-3, 12, 0.1)) # from -3 to 12 by 0.1
 ```
 
 ## Next, we'll specify a *prior distribution*. That is - how likely do we *think* each of these possible means are?
@@ -169,7 +185,7 @@ grid <- tibble(possible_mean = seq(-3, 12, 0.1))
 
 --
 ```{r }
-prior <- dnorm(grid$possible_mean, mean = 2, sd = 1)
+prior <- dnorm(grid$possible_mean, mean = 2, sd = 1) # how likely are these means?
 ```
 
 # Plot our prior
@@ -200,7 +216,6 @@ grid %>%
 
 # Set prior
 * Let's go with a fairly conservative prior, with $\mu = 2, \sigma = 3$.
-
 * We also need to normalize it so the probability sums to 1.0
 
 ```{r }
@@ -217,7 +232,6 @@ grid
 ```
 
 # Compute posterior
-
 ```{r }
 grid <- grid %>%
   mutate(posterior = likelihood * prior,
@@ -225,7 +239,6 @@ grid <- grid %>%
 ```
 
 # Plot
-
 ```{r }
 grid %>%
   pivot_longer(-possible_mean) %>%
@@ -235,7 +248,6 @@ ggplot(aes(possible_mean, value)) +
 
 # Observe a second data point
 ## The old posterior becomes our new prior
-
 ```{r }
 grid <- grid %>%
   mutate(likelihood = dnorm(true_data[2], possible_mean, 2),
@@ -244,7 +256,6 @@ grid <- grid %>%
 ```
 
 # Plot
-
 ```{r }
 grid %>%
   pivot_longer(-possible_mean) %>%
@@ -253,7 +264,6 @@ ggplot(aes(possible_mean, value)) +
 ```
 
 # Observe a third data point
-
 ```{r }
 grid <- grid %>%
   mutate(likelihood = dnorm(true_data[3], possible_mean, 2),
@@ -262,7 +272,6 @@ grid <- grid %>%
 ```
 
 # Plot
-
 ```{r }
 grid %>%
   pivot_longer(-possible_mean) %>%
@@ -271,7 +280,6 @@ ggplot(aes(possible_mean, value)) +
 ```
 
 # All the data
-
 ```{r }
 grid <- grid %>%
   mutate(prior = dnorm(grid$possible_mean, mean = 2, sd = 3),
@@ -285,7 +293,6 @@ for(i in seq_along(true_data)) {
            posterior = posterior / sum(posterior))
 }
 ```
-
 
 ```{r }
 grid %>%
@@ -301,7 +308,6 @@ ggplot(aes(possible_mean, value)) +
   + In frequentist, our data is assumed random, our parameters fixed
 
 ## Most likely?
-
 ```{r }
 grid %>%
   filter(posterior == max(posterior))
@@ -311,9 +317,7 @@ grid %>%
 * Now that we have a posterior distribution, we can sample from it to help us with inference.
 * Each possible mean should be sampled in accordance with its probability specified by the posterior.
 
-
 ## Let's draw 10,000 samples
-
 ```{r }
 posterior_samples <- sample(grid$possible_mean, 
                             size = 10000,
@@ -323,58 +327,49 @@ posterior_samples <- sample(grid$possible_mean,
 
 # Inference
 ## First, let's plot the samples
-
 ```{r }
 ggplot(data.frame(sample = posterior_samples), aes(sample)) +
   geom_histogram(bins = 100)
 ```
 
 # Central tendency
-
 ```{r }
 mean(posterior_samples)
 median(posterior_samples)
 ```
 
 ## Spread
-
 ```{r }
 sd(posterior_samples)
 ```
 
 # Credible intervals
 ## Let's compute an 80% credible interval
-
 ```{r }
 tibble(posterior_samples) %>%
   summarize(ci_80 = quantile(posterior_samples, c(0.1, 0.9)))
 ```
 
 ## What's the chance the "true" mean is less than 4.8?
-
 ```{r }
 sum(posterior_samples < 4.8) / length(posterior_samples) * 100
 ```
 
 # Ranges
 ## What's the probability the "true" mean is between 5.2 and 5.5?
-
 ```{r }
 sum(posterior_samples >= 5.2 & posterior_samples <= 5.5) /
   length(posterior_samples) * 100
 ```
 
 ## Greater than 4.5?
-
 ```{r }
 sum(posterior_samples > 4.5) / length(posterior_samples) * 100
 ```
-
 ## Note this is much more natural than frequentist statistics
 
 # Change our prior
 ## Let's try again with a tighter prior
-
 ```{r }
 grid <- grid %>%
   mutate(prior = dnorm(grid$possible_mean, mean = 2, sd = 0.1),
@@ -403,7 +398,6 @@ grid %>%
 
 # More data
 ## Same thing, but this time with tons of data
-
 ```{r }
 true_data <- rnorm(5000, 5, 1)
 grid <- grid %>%
@@ -437,228 +431,3 @@ grid %>%
 * Larger samples will overwhelm priors quicker, particularly if they are diffuse
 * Think through the lens of updating your prior beliefs
 * This whole framework is quite different, but also gives us a lot of advantages in terms of probability interpretation, as we'll see
-
-## class: inverse-blue middle
-# Bayes for regression
-
-# Implementation with {brms}
-
-# What is it?
-* **b**ayesian **r**egression **m**odeling with **s**tan
-* Uses [stan](https://mc-stan.org/) as the model backend - basically writes the model code for you then sends it to stan
-* Allows model syntax similar to **lme4**
-* Simple specification of priors - defaults are flat
-* Provides many methods for post-model fitting inference
-
-# Fit a basic model
-## Let's start with the default (uninformative) priors, and fit a standard, simple-linear regression model
-
-```{r }
-sleep_m0 <- brm(Reaction ~ Days, data = lme4::sleepstudy)
-```
-
-# Model summary
-
-```{r }
-summary(sleep_m0)
-```
-
-# View fixed effect
-## Let's look at our estimated relation between `Days` and `Reaction`
-
-```{r }
-conditional_effects(sleep_m0)
-```
-
-# Wrong model
-## Of course, this is the wrong model, we have a multilevel structure
-
-```{r echo = FALSE, message = FALSE}
-ggplot(lme4::sleepstudy, aes(Days, Reaction)) +
-  geom_point(size = 2) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~Subject) +
-  theme_minimal(15)
-```
-
-# Multilevel model
-## Notice the syntax is essentially equivalent to **lme4**
-
-```{r eval = FALSE}
-sleep_m1 <- brm(Reaction ~ Days + (Days | Subject), data = lme4::sleepstudy)
-summary(sleep_m1)
-```
-
-```{r include = FALSE}
-sleep_m1 <- brm(Reaction ~ Days + (Days | Subject), data = lme4::sleepstudy)
-```
-
-```{r echo = FALSE}
-summary(sleep_m1)
-```
-
-# Fixed effect
-## The uncertainty has increased
-
-```{r }
-conditional_effects(sleep_m1)
-```
-
-# Checking your model
-
-```{r }
-pp_check(sleep_m1)
-```
-
-# More checks
-
-```{r }
-plot(sleep_m1)
-```
-
-# Even more
-
-```{r eval = FALSE}
-launch_shinystan(sleep_m1)
-```
-
-# Another model
-
-```{r eval = FALSE}
-kidney_m0 <- brm(time ~ age + sex, data = kidney)
-pp_check(kidney_m0, type = "ecdf_overlay")
-```
-
-# Fixing this
-## We need to change the assumptions of our model - specifically that the outcome is not normally distributed
-
-## Maybe Poisson?
-
-```{r eval = FALSE}
-kidney_m1 <- brm(time ~ age + sex, data = kidney, family = poisson())
-```
-
-# Nope
-
-```{r }
-pp_check(kidney_m1, type = "ecdf_overlay")
-```
-
-# Gamma w/log link
-```{r eval = FALSE}
-kidney_m2 <- brm(time ~ age + sex, data = kidney, family = Gamma("log"))
-pp_check(kidney_m2, type = "ecdf_overlay")
-```
-
-# Specifying priors
-## Let's sample from *only* our priors to see what kind of predictions we get.
-
-## Here, we're specifying that our beta coefficient prior is $\beta \sim N(0, 0.5)$ 
-
-```{r eval = FALSE}
-kidney_m3 <- brm(
-  time ~ age + sex,
-  data = kidney,
-  family = Gamma("log"),
-  prior = prior(normal(0, 0.5), class = "b"),
-  sample_prior = "only"
-)
-```
-
-```{r }
-kidney_m3
-```
-
-# Prior predictions
-## Random sample of 100 points
-
-```{r echo = FALSE}
-kidney %>%
-  tidybayes::add_fitted_draws(kidney_m3) %>%
-  ungroup() %>% 
-  sample_n(100) %>% 
-  ggplot(aes(time, .value)) +
-  geom_point() +
-  facet_wrap(~sex) +
-  scale_y_log10(labels = scales::comma)
-```
-
-# Why?
-## It seemed like our prior was fairly tight
-
-## The exploding prior happens because of the log transformation
-* Age is coded in years
-* Imagine a coef of 1 (2 standard deviations above our prior)
-* Prediction for a 25 year old would be exp(25) = `r round(exp(25), 3)`
-
-# A note on prior specifications
-* It's hard
-* I don't have a ton of good advice
-* Be particularly careful when you're using distributions that have anything other than an identity link (e.g., log link, as we are here)
-
-# One more model
-## Let's fit a model we've fit previously
-
-#In Week 4, we fit this model
-
-```{r }
-m_lmer <- lmer(popular ~ extrav + (extrav|class), popular,
-               control = lmerControl(optimizer = "bobyqa"))
-```
-
-# Try fitting the same model with **{brms}** with the default, diffuse priors
-
-# Bayesian verision
-
-```{r include = FALSE}
-m_brms <- brm(popular ~ extrav + (extrav|class), popular)
-```
-
-# lme4 model
-```{r }
-arm::display(m_lmer)
-```
-
-# brms model
-
-```{r }
-m_brms
-```
-
-# Plotting the Bayes fit
-
-```{r fig.height = 5}
-tibble(extrav = 1:10, class = 0) %>% 
-  add_fitted_draws(m_brms, allow_new_levels = TRUE, n = 100) %>% 
-  ggplot(aes(extrav, .value)) +
-  geom_line(aes(group = .draw), size = 0.1)
-```
-
-# Add in raw data
-```{r fig.height = 5}
-tibble(extrav = 1:10, class = 0) %>% 
-  add_fitted_draws(m_brms, allow_new_levels = TRUE, n = 100) %>% 
-  ggplot(aes(extrav, .value)) +
-  geom_point(aes(extrav, popular), data = popular,
-             color = "gray70") + #<<
-  geom_line(aes(group = .draw), size = 0.1)
-```
-
-# Wrapping up
-
-# Advantages to Bayes
-* Opportunity to incorporate prior knowledge into the modeling process (you don't really *have* to - could just set wide priors)
-* Natural interpretation of uncertainty
-* Can often allow you to estimate models that are difficult if not impossible with frequentist methods
-
-## Disadvatages
-
-* Generally going to be slower in implementation
-* You may run into pushback from others - particularly with respect to prior
-
-# Notes on the posterioir
-* The posterior is the distribution of the parameters, given the data
-* You can think of it as the distribution of what we don't know, but are interested in (the model parameters), given what we know or have observed (the data), and our prior beliefs
-* Gives a complete picture of parameter uncertainty
-* We can do lots of things with the posterior that is hard to get otherwise
-* Next time, we'll discuss how missing values can be treated as unknown variables (parameters) in the model, and imputed from the posterior
